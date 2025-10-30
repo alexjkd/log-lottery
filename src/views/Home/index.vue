@@ -63,6 +63,204 @@ const personPool = ref<IPersonConfig[]>([])
 const intervalTimer = ref<any>(null)
 // const currentPrizeValue = ref(JSON.parse(JSON.stringify(currentPrize.value)))
 
+// 红包雨：Canvas 引擎与实例
+const packetCanvasRef = ref<HTMLCanvasElement | null>(null)
+let packetRain: any = null
+let packetRunning = false
+
+function initPacketRain() {
+    if (!packetCanvasRef.value) return
+    const canvas = packetCanvasRef.value
+    const ctx = canvas.getContext('2d')!
+    let width = 0, height = 0, dpr = Math.min(window.devicePixelRatio || 1, 2)
+    const active: any[] = []
+    const pool: any[] = []
+    let lastTs = 0
+    let spawnAcc = 0
+
+    const config = {
+        gravity: 1400,
+        spawnPerSecond: 120,
+        maxConcurrent: 200,
+        minSize: 28,
+        maxSize: 64,
+        baseSpeedMin: 300,
+        baseSpeedMax: 600,
+        windAmplitude: 50,
+        windFrequency: 1.2
+    }
+
+    function resize() {
+        const rect = canvas.getBoundingClientRect()
+        width = rect.width
+        height = rect.height
+        canvas.width = Math.floor(width * dpr)
+        canvas.height = Math.floor(height * dpr)
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    }
+    resize()
+
+    function rand(a: number, b: number) { return a + Math.random() * (b - a) }
+
+    function spawn(ts: number) {
+        const size = rand(config.minSize, config.maxSize)
+        const obj = pool.pop() || {}
+        obj.w = size
+        obj.h = size * 1.2
+        obj.x = rand(size * 0.5, width - size * 0.5)
+        obj.y = -obj.h - rand(0, height * 0.25)
+        obj.vx = 0
+        obj.vy = rand(config.baseSpeedMin, config.baseSpeedMax)
+        obj.windPhase = Math.random() * Math.PI * 2
+        obj.windAmp = config.windAmplitude * (0.6 + Math.random() * 0.8)
+        obj.windFreq = config.windFrequency * (0.7 + Math.random() * 0.6)
+        obj.rotate = rand(-12, 12) * Math.PI / 180
+        obj.rotateSpeed = rand(-30, 30) * Math.PI / 180
+        obj.state = 'fall'
+        active.push(obj)
+    }
+
+    function recycle(i: number) {
+        const o = active[i]
+        if (!o) return
+        active.splice(i, 1)
+        pool.push(o)
+    }
+
+    function roundRectPath(x: number, y: number, w: number, h: number, r: number) {
+        const rr = Math.min(r, w / 2, h / 2)
+        ctx.beginPath()
+        ctx.moveTo(x + rr, y)
+        ctx.lineTo(x + w - rr, y)
+        ctx.quadraticCurveTo(x + w, y, x + w, y + rr)
+        ctx.lineTo(x + w, y + h - rr)
+        ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h)
+        ctx.lineTo(x + rr, y + h)
+        ctx.quadraticCurveTo(x, y + h, x, y + h - rr)
+        ctx.lineTo(x, y + rr)
+        ctx.quadraticCurveTo(x, y, x + rr, y)
+        ctx.closePath()
+    }
+
+    function drawPacket(p: any) {
+        const { x, y, w, h, rotate, state } = p
+        ctx.save()
+        ctx.translate(x, y)
+        ctx.rotate(rotate)
+        const scale = state === 'hit' ? 0.9 : 1
+        ctx.scale(scale, scale)
+
+        const r = Math.min(14, Math.min(w, h) * 0.22)
+        const W = w, H = h
+        const grd = ctx.createLinearGradient(-W/2, -H/2, W/2, H/2)
+        grd.addColorStop(0, '#ff3b30')
+        grd.addColorStop(1, '#ff6a39')
+        ctx.fillStyle = grd
+        roundRectPath(-W/2, -H/2, W, H, r)
+        ctx.fill()
+
+        ctx.fillStyle = '#FFD66B'
+        ctx.beginPath()
+        ctx.arc(0, -H * 0.05, H * 0.16, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.fillStyle = '#A45B00'
+        ctx.font = `${Math.floor(H * 0.18)}px system-ui, sans-serif`
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText('¥', 0, -H * 0.05)
+        ctx.restore()
+    }
+
+    function tick(ts: number) {
+        if (!packetRunning) return
+        if (!lastTs) lastTs = ts
+        const dt = Math.min(0.033, (ts - lastTs) / 1000)
+        lastTs = ts
+
+        // spawn
+        spawnAcc += dt * config.spawnPerSecond
+        const canSpawn = Math.max(0, config.maxConcurrent - active.length)
+        let toSpawn = Math.min(canSpawn, Math.floor(spawnAcc))
+        while (toSpawn-- > 0) spawn(ts)
+        spawnAcc -= Math.floor(spawnAcc)
+
+        ctx.clearRect(0, 0, width, height)
+        const time = ts / 1000
+        for (let i = active.length - 1; i >= 0; i--) {
+            const p = active[i]
+            const sway = Math.sin(time * p.windFreq * 2 * Math.PI + p.windPhase) * p.windAmp
+            p.rotate += p.rotateSpeed * dt
+            p.vy += 1400 * dt
+            p.x += (sway) * 0.05
+            p.y += p.vy * dt
+            if (p.y - p.h / 2 > height + 20) { recycle(i); continue }
+            drawPacket(p)
+        }
+        requestAnimationFrame(tick)
+    }
+
+    function start() {
+        if (packetRunning) return
+        packetRunning = true
+        lastTs = 0
+        spawnAcc = 0
+        resize()
+        requestAnimationFrame(tick)
+    }
+    function stop() {
+        packetRunning = false
+        active.length = 0
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    window.addEventListener('resize', resize, { passive: true })
+    packetRain = { start, stop, resize }
+}
+
+function startPacketRain() {
+    if (!packetRain) initPacketRain()
+    packetRain && packetRain.start()
+    // 隐藏背景卡片层（使用 display 防止继承/层叠问题）
+    try {
+        if (renderer.value?.domElement) {
+            renderer.value.domElement.style.display = 'none'
+        }
+    } catch (e) {}
+}
+function stopPacketRain() {
+    packetRain && packetRain.stop()
+    // 恢复背景卡片层
+    try {
+        if (renderer.value?.domElement) {
+            renderer.value.domElement.style.display = ''
+        }
+    } catch (e) {}
+}
+
+// 仅显示中奖卡片，隐藏其他背景卡片
+function hideBackgroundCards() {
+    if (!objects.value?.length) return
+    const luckySet = new Set(luckyCardList.value)
+    for (let i = 0; i < objects.value.length; i++) {
+        const el = objects.value[i]?.element as HTMLElement | undefined
+        if (!el) continue
+        if (!luckySet.has(i)) {
+            el.style.visibility = 'hidden'
+        } else {
+            el.style.visibility = 'visible'
+        }
+    }
+}
+
+function showAllCards() {
+    if (!objects.value?.length) return
+    for (let i = 0; i < objects.value.length; i++) {
+        const el = objects.value[i]?.element as HTMLElement | undefined
+        if (!el) continue
+        el.style.visibility = 'visible'
+    }
+}
+
 // 填充数据，填满七行
 function initTableData() {
     if (notPersonList.value.length <= 0) {
@@ -353,6 +551,8 @@ const enterLottery = async () => {
     if (!canOperate.value) {
         return
     }
+    // 进入新一轮时显示全部卡片
+    showAllCards()
     if (!intervalTimer.value) {
         randomBallData()
     }
@@ -364,9 +564,10 @@ const enterLottery = async () => {
         }
     }
     canOperate.value = false
-    await transform(targets.sphere, 1000)
+    // 不再切换为球体形态
+    await transform(targets.table, 600)
     currentStatus.value = 1
-    rollBall(0.1, 2000)
+    // 移除球体旋转动画
 }
 // 开始抽奖
 const startLottery = () => {
@@ -427,7 +628,9 @@ const startLottery = () => {
         duration: 8000
     })
     currentStatus.value = 2
-    rollBall(10, 3000)
+    // 启动红包雨
+    startPacketRain()
+    // 移除球体旋转动画
 }
 
 const stopLottery = async () => {
@@ -437,7 +640,9 @@ const stopLottery = async () => {
     clearInterval(intervalTimer.value)
     intervalTimer.value = null
     canOperate.value = false
-    rollBall(0, 1)
+    // 停止红包雨
+    stopPacketRain()
+    // 移除球体旋转动画
 
     const windowSize = { width: window.innerWidth, height: window.innerHeight }
     // 新增：中奖卡片为2时使用居中定位
@@ -492,6 +697,8 @@ const stopLottery = async () => {
                 resetCamera()
             })
     })
+    // 中奖者确定后，仅显示中奖卡片
+    hideBackgroundCards()
     // 将本轮产生的中奖者暂存到 store，用于下一轮开始前的前置排除
     personConfig.addProvisionalWinners(luckyTargets.value as any, currentPrize.value)
     // 结果已产生：立即暂存中奖名单，并同步奖品剩余/使用，确保“剩余 + 中奖 = 总数”
@@ -511,6 +718,8 @@ const continueLottery = async () => {
     if (!canOperate.value) {
         return
     }
+    // 恢复显示所有卡片
+    showAllCards()
 
     const customCount = currentPrize.value.separateCount
     if (customCount && customCount.enable && customCount.countList.length > 0) {
@@ -553,6 +762,10 @@ const quitLottery = () => {
     personConfig.clearProvisionalWinners()
     // 取消时还原预览字段
     delete (currentPrize.value as any).previewUsedCount
+    // 停止红包雨
+    stopPacketRain()
+    // 恢复显示所有卡片
+    showAllCards()
     enterLottery()
     currentStatus.value = 0
 }
@@ -677,11 +890,18 @@ onMounted(() => {
     listenKeyboard()
     // 进入首页时强制隐藏左侧奖品栏
     globalConfig.setIsShowPrizeList(false)
+    // 红包雨可见性处理
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            stopPacketRain()
+        }
+    })
 });
 onUnmounted(() => {
     clearInterval(intervalTimer.value)
     intervalTimer.value = null
     window.removeEventListener('keydown', listenKeyboard)
+    stopPacketRain()
 })
 // watch(() => currentPrize.value.isUsed, (val) => {
 //     if (val) {
@@ -755,6 +975,8 @@ onUnmounted(() => {
 
             </div>
             <!-- end -->
+            <!-- 红包雨画布覆盖层 -->
+            <canvas ref="packetCanvasRef" class="packet-canvas"></canvas>
         </div>
         <StarsBackground></StarsBackground>
 
@@ -771,6 +993,14 @@ onUnmounted(() => {
   background-size: cover;
   background-position: center;
   height: 100vh;
+}
+
+.packet-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
 }
 
 #menu {
