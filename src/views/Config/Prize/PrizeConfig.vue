@@ -181,13 +181,7 @@ watch(() => prizeList.value, (val: IPrizeConfig[]) => {
                     <input type="text" v-model="item.name" placeholder="名称"
                         class="w-full max-w-xs input-sm input input-bordered" />
                 </label>
-                <label class="w-1/2 max-w-xs mb-10 form-control">
-                    <div class="label">
-                        <span class="label-text">全员参加</span>
-                    </div>
-                    <input type="checkbox" :checked="item.isAll" @change="item.isAll = !item.isAll"
-                        class="mt-2 border-solid checkbox checkbox-secondary border-1" />
-                </label>
+                
                 <label class="w-1/2 max-w-xs mb-10 form-control">
                     <div class="label">
                         <span class="label-text">抽奖人数</span>

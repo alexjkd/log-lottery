@@ -224,9 +224,9 @@ onMounted(() => {
                                             class="w-24 p-0 m-0 overflow-hidden text-center card-title whitespace-nowrap text-ellipsis">
                                             {{ item.name }}</h2>
                                     </div>
-                                    <p class="absolute z-40 p-0 m-0 text-gray-300/80 mt-9">{{ item.isUsedCount }}/{{
+                                    <p class="absolute z-40 p-0 m-0 text-gray-300/80 mt-9">{{ (item.previewUsedCount ?? item.isUsedCount) }}/{{
                                         item.count }}</p>
-                                    <progress class="w-3/4 h-6 progress progress-primary" :value="item.isUsedCount"
+                                    <progress class="w-3/4 h-6 progress progress-primary" :value="(item.previewUsedCount ?? item.isUsedCount)"
                                         :max="item.count"></progress>
                                     <!-- <p class="p-0 m-0">{{ item.isUsedCount }}/{{ item.count }}</p> -->
                                 </div>

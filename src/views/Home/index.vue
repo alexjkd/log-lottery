@@ -21,6 +21,7 @@ import useStore from '@/store'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
 import { useToast } from 'vue-toast-notification';
+import { provisionalWinners, rollbackWinners, updatePrizeUsage, mapWinnersPayload } from '@/api/winner'
 import 'vue-toast-notification/dist/theme-sugar.css';
 
 const toast = useToast();
@@ -372,6 +373,8 @@ const startLottery = () => {
     if (!canOperate.value) {
         return
     }
+    // 在开始前同步一次历史中奖标记，并确保已中奖与暂存中奖者被排除
+    personConfig.syncIsWinFromHistory()
     // 验证是否已抽完全部奖项
     if (currentPrize.value.isUsed || !currentPrize.value) {
         toast.open({
@@ -383,6 +386,7 @@ const startLottery = () => {
 
         return
     }
+    // 候选池：仅未中奖且不在暂存名单的人
     personPool.value = notPersonList.value
     // 验证抽奖人数是否还够
     if (personPool.value.length < currentPrize.value.count - currentPrize.value.isUsedCount) {
@@ -488,6 +492,19 @@ const stopLottery = async () => {
                 resetCamera()
             })
     })
+    // 将本轮产生的中奖者暂存到 store，用于下一轮开始前的前置排除
+    personConfig.addProvisionalWinners(luckyTargets.value as any, currentPrize.value)
+    // 结果已产生：立即暂存中奖名单，并同步奖品剩余/使用，确保“剩余 + 中奖 = 总数”
+    try {
+        const previewUsed = currentPrize.value.isUsedCount + luckyTargets.value.length
+        // 在左侧奖品栏即时预览剩余：为当前奖项设置 previewUsedCount
+        ;(currentPrize.value as any).previewUsedCount = previewUsed
+        const payload = mapWinnersPayload(luckyTargets.value as any, currentPrize.value)
+        await provisionalWinners(payload)
+        await updatePrizeUsage({ prizeId: currentPrize.value.id as any, usedCount: previewUsed, total: currentPrize.value.count })
+    } catch (e) {
+        console.error('暂存中奖或更新进度失败', e)
+    }
 }
 // 继续
 const continueLottery = async () => {
@@ -512,9 +529,30 @@ const continueLottery = async () => {
     }
     personConfig.addAlreadyPersonList(luckyTargets.value, currentPrize.value)
     prizeConfig.updatePrizeConfig(currentPrize.value)
+    // 本轮确认后，清空暂存名单
+    personConfig.clearProvisionalWinners()
+    // 确认后移除预览字段
+    delete (currentPrize.value as any).previewUsedCount
+    // 确认使用进度（以最终 usedCount 为准）
+    try {
+        await updatePrizeUsage({ prizeId: currentPrize.value.id as any, usedCount: currentPrize.value.isUsedCount, total: currentPrize.value.count })
+    } catch (e) {
+        console.error('确认更新进度失败', e)
+    }
     await enterLottery()
 }
 const quitLottery = () => {
+    // 回滚后台暂存数据与进度
+    try {
+        rollbackWinners(currentPrize.value.id as any)
+        updatePrizeUsage({ prizeId: currentPrize.value.id as any, usedCount: currentPrize.value.isUsedCount, total: currentPrize.value.count })
+    } catch (e) {
+        console.error('回滚失败', e)
+    }
+    // 取消时也清空暂存名单
+    personConfig.clearProvisionalWinners()
+    // 取消时还原预览字段
+    delete (currentPrize.value as any).previewUsedCount
     enterLottery()
     currentStatus.value = 0
 }

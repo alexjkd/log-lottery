@@ -20,6 +20,8 @@ const process = require('node:process')
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname)
+  const defaultApi = 'http://localhost:3000'
+  const proxyTarget = (env.VITE_BASE_URL || process.env.VITE_BASE_URL || defaultApi)
   const chunkName = mode === 'prebuild' ? '[name]' : 'chunk'
 
   return {
@@ -93,7 +95,7 @@ export default defineConfig(({ mode }) => {
       port: 6719,
       proxy: {
         '/api': {
-          target: env.VITE_BASE_URL,
+          target: proxyTarget,
           // 是否跨域
           changeOrigin: true,
           // 路径重写
