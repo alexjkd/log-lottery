@@ -62,6 +62,8 @@ const personPool = ref<IPersonConfig[]>([])
 
 const intervalTimer = ref<any>(null)
 // const currentPrizeValue = ref(JSON.parse(JSON.stringify(currentPrize.value)))
+// 礼花开关：仅在抽取完成时触发一次，继续后不再触发
+let enableConfetti = true
 
 // 红包雨：Canvas 引擎与实例
 const packetCanvasRef = ref<HTMLCanvasElement | null>(null)
@@ -259,6 +261,51 @@ function showAllCards() {
         if (!el) continue
         el.style.visibility = 'visible'
     }
+}
+
+// 将中奖卡片从前景位置动画返回到表格位置
+function returnWinnersToTable(): Promise<void> {
+    return new Promise((resolve) => {
+        if (!luckyCardList.value.length) {
+            resolve()
+            return
+        }
+        let finished = 0
+        const total = luckyCardList.value.length
+        for (let i = 0; i < luckyCardList.value.length; i++) {
+            const cardIndex = luckyCardList.value[i]
+            const item = objects.value[cardIndex]
+            const targetPos = targets.table[cardIndex]?.position
+            if (!item || !targetPos) {
+                finished++
+                if (finished >= total) resolve()
+                continue
+            }
+            new TWEEN.Tween(item.position)
+                .to({ x: targetPos.x, y: targetPos.y, z: 0 }, 700)
+                .easing(TWEEN.Easing.Exponential.InOut)
+                .onStart(() => {
+                    // 还原卡片样式尺寸为普通卡
+                    item.element = useElementStyle(
+                        item.element,
+                        {} as any,
+                        cardIndex,
+                        patternList.value,
+                        patternColor.value,
+                        cardColor.value,
+                        { width: cardSize.value.width, height: cardSize.value.height },
+                        textSize.value,
+                        'default'
+                    )
+                })
+                .onUpdate(render)
+                .start()
+                .onComplete(() => {
+                    finished++
+                    if (finished >= total) resolve()
+                })
+        }
+    })
 }
 
 // 填充数据，填满七行
@@ -469,8 +516,14 @@ function onWindowResize() {
 * [animation update all tween && controls]
 */
 function animation() {
+    // 始终更新补间以确保中奖动画正常
     TWEEN.update();
-    controls.value.update();
+    // 渲染层隐藏/结果阶段/红包雨中时，暂停重的控制器更新，减少开销
+    const rendererHidden = !!(renderer.value?.domElement && (renderer.value.domElement.style.display === 'none'))
+    const inResults = currentStatus.value === 3
+    if (!rendererHidden && !packetRunning && !inResults) {
+        controls.value.update();
+    }
     // 设置自动旋转
     // 设置相机位置
     requestAnimationFrame(animation);
@@ -630,6 +683,13 @@ const startLottery = () => {
     currentStatus.value = 2
     // 启动红包雨
     startPacketRain()
+    // 暂停卡片矩阵刷新，降低开销
+    if (intervalTimer.value) {
+        clearInterval(intervalTimer.value)
+        intervalTimer.value = null
+    }
+    // 恢复礼花开关（仅在本轮结束时播放一次）
+    enableConfetti = true
     // 移除球体旋转动画
 }
 
@@ -693,7 +753,10 @@ const stopLottery = async () => {
             .easing(TWEEN.Easing.Exponential.InOut)
             .start()
             .onComplete(() => {
-                confettiFire()
+                if (enableConfetti) {
+                    confettiFire()
+                    enableConfetti = false
+                }
                 resetCamera()
             })
     })
@@ -748,7 +811,17 @@ const continueLottery = async () => {
     } catch (e) {
         console.error('确认更新进度失败', e)
     }
-    await enterLottery()
+    // 动画将中奖卡片返回到背景表格
+    await returnWinnersToTable()
+    // 清空上一轮数据
+    luckyTargets.value = []
+    luckyCardList.value = []
+    // 回到首页“开始”状态
+    currentStatus.value = 0
+    // 恢复矩阵随机刷新
+    if (!intervalTimer.value) {
+        randomBallData()
+    }
 }
 const quitLottery = () => {
     // 回滚后台暂存数据与进度
@@ -766,8 +839,11 @@ const quitLottery = () => {
     stopPacketRain()
     // 恢复显示所有卡片
     showAllCards()
-    enterLottery()
     currentStatus.value = 0
+    // 恢复矩阵随机刷新
+    if (!intervalTimer.value) {
+        randomBallData()
+    }
 }
 // 庆祝动画
 const confettiFire = () => {
@@ -831,25 +907,50 @@ const setDefaultPersonList = () => {
     // 刷新页面
     window.location.reload()
 }
-// 随机替换数据
+// 随机单张闪烁刷新（每2秒刷新20张）：当人数多于可显示数量时按顺序轮换；不足时随机重复
+let displayOffset = 0
 const randomBallData = (mod: 'default' | 'lucky' | 'sphere' = 'default') => {
-    // 两秒执行一次
+    // 2 秒一次，随机挑一张卡片刷新
     intervalTimer.value = setInterval(() => {
-        // 产生随机数数组
-        const indexLength = 4
-        const cardRandomIndexArr: number[] = []
-        const personRandomIndexArr: number[] = []
-        for (let i = 0; i < indexLength; i++) {
-            cardRandomIndexArr.push(Math.round(Math.random() * (tableData.value.length - 1)))
-            personRandomIndexArr.push(Math.round(Math.random() * (notPersonList.value.length - 1)))
+        // 仅在首页或准备态刷新，抽奖中/结果态不刷新
+        if (!(currentStatus.value === 0 || currentStatus.value === 1)) return
+        const capacity = Math.min(tableData.value.length, objects.value.length)
+        const pool = notPersonList.value
+        if (capacity <= 0 || !pool || pool.length <= 0) return
+
+        const batchSize = Math.min(20, capacity)
+        const chosenSlots = new Set<number>()
+        while (chosenSlots.size < batchSize) {
+            chosenSlots.add(Math.floor(Math.random() * capacity))
         }
-        for (let i = 0; i < cardRandomIndexArr.length; i++) {
-            if (!objects.value[cardRandomIndexArr[i]]) {
-                continue;
+        chosenSlots.forEach((slotIndex) => {
+            let person: any
+            if (pool.length >= capacity) {
+                person = pool[displayOffset % pool.length]
+                displayOffset = (displayOffset + 1) % pool.length
+            } else {
+                person = pool[Math.floor(Math.random() * pool.length)]
             }
-            objects.value[cardRandomIndexArr[i]].element = useElementStyle(objects.value[cardRandomIndexArr[i]].element, notPersonList.value[personRandomIndexArr[i]], cardRandomIndexArr[i], patternList.value, patternColor.value, cardColor.value, { width: cardSize.value.width, height: cardSize.value.height }, textSize.value, mod)
-        }
-    }, 200)
+            const obj = objects.value[slotIndex]
+            if (!obj) return
+            obj.element = useElementStyle(
+                obj.element,
+                person,
+                slotIndex,
+                patternList.value,
+                patternColor.value,
+                cardColor.value,
+                { width: cardSize.value.width, height: cardSize.value.height },
+                textSize.value,
+                mod
+            )
+            // 闪烁效果
+            try {
+                obj.element.classList.add('flash')
+                setTimeout(() => obj.element.classList.remove('flash'), 300)
+            } catch (e) {}
+        })
+    }, 1000)
 }
 // 监听键盘
 const listenKeyboard = () => {
@@ -865,7 +966,7 @@ const listenKeyboard = () => {
         }
         switch (currentStatus.value) {
             case 0:
-                enterLottery()
+                startLottery()
                 break;
             case 1:
                 startLottery()
@@ -926,9 +1027,7 @@ onUnmounted(() => {
 
             <!-- 选中菜单结构 start-->
             <div id="menu">
-                <button class="btn-end " @click="enterLottery" v-if="currentStatus == 0 && tableData.length > 0">进入抽奖</button>
-
-                <div class="start" v-if="currentStatus == 1">
+                <div class="start" v-if="(currentStatus == 0 || currentStatus == 1) && tableData.length > 0">
                     <button class="btn-start" @click="startLottery"><strong>开始</strong>
                         <div id="container-stars">
                             <div id="stars"></div>
@@ -1270,6 +1369,16 @@ strong {
     box-shadow: 0 0 0.6em .25em var(--glow-color),
         0 0 2.5em 2em var(--glow-spread-color),
         inset 0 0 .5em .25em var(--glow-color);
+}
+
+// 单张闪烁效果（刷新时轻微亮度变化）
+.flash {
+    animation: card-flash 0.3s ease-in-out;
+}
+@keyframes card-flash {
+    0% { filter: brightness(1); }
+    50% { filter: brightness(1.35); }
+    100% { filter: brightness(1); }
 }
 
 // 按钮动画
