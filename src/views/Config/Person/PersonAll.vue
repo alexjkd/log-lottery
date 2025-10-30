@@ -1,17 +1,14 @@
 <!-- eslint-disable vue/no-parsing-error -->
 <script setup lang='ts'>
-import type { IPersonConfig } from '@/types/storeType'
-import DaiysuiTable from '@/components/DaiysuiTable/index.vue'
-import i18n from '@/locales/i18n'
+import { ref, onMounted } from 'vue';
 import useStore from '@/store'
-import { addOtherInfo } from '@/utils'
-import { readFileBinary } from '@/utils/file'
+import { IPersonConfig } from '@/types/storeType';
 import { storeToRefs } from 'pinia'
-import { onMounted, ref } from 'vue'
-import { useI18n } from 'vue-i18n'
 import * as XLSX from 'xlsx'
+import { readFileBinary } from '@/utils/file'
+import { addOtherInfo } from '@/utils'
+import DaiysuiTable from '@/components/DaiysuiTable/index.vue'
 
-const { t } = useI18n()
 const personConfig = useStore().personConfig
 const { getAllPersonList: allPersonList, getAlreadyPersonList: alreadyPersonList } = storeToRefs(personConfig)
 const limitType = '.xlsx,.xls'
@@ -20,207 +17,215 @@ const limitType = '.xlsx,.xls'
 const resetDataDialog = ref()
 const delAllDataDialog = ref()
 
-async function handleFileChange(e: Event) {
-  const dataBinary = await readFileBinary(((e.target as HTMLInputElement).files as FileList)[0]!)
-  const workBook = XLSX.read(dataBinary, { type: 'binary', cellDates: true })
-  const workSheet = workBook.Sheets[workBook.SheetNames[0]]
-  const excelData = XLSX.utils.sheet_to_json(workSheet)
-  const allData = addOtherInfo(excelData)
-  personConfig.resetPerson()
-  personConfig.addNotPersonList(allData)
-}
-function exportData() {
-  let data = JSON.parse(JSON.stringify(allPersonList.value))
-  // 排除一些字段
-  for (let i = 0; i < data.length; i++) {
-    delete data[i].x
-    delete data[i].y
-    delete data[i].id
-    delete data[i].createTime
-    delete data[i].updateTime
-    delete data[i].prizeId
-    // 修改字段名称
-    if (data[i].isWin) {
-      data[i].isWin = i18n.global.t('data.yes')
+const handleFileChange = async (e: Event) => {
+    let dataBinary = await readFileBinary(((e.target as HTMLInputElement).files as FileList)[0]!)
+    let workBook = XLSX.read(dataBinary, { type: 'binary', cellDates: true })
+    let workSheet = workBook.Sheets[workBook.SheetNames[0]]
+
+    // 先尝试按对象读取（带表头模板）
+    let rawJson: any[] = XLSX.utils.sheet_to_json(workSheet, { defval: '' }) as any[]
+
+    // 判定是否为“无表头”的情况：缺少常见键名时，按二维数组读取并手动映射
+    const hasExpectedKeys = (row: any) => {
+        if (!row) return false;
+        const keys = Object.keys(row)
+        const normalized = keys.map(k => String(k).toLowerCase())
+        return (
+            normalized.includes('uid') || normalized.includes('编号') ||
+            normalized.includes('name') || normalized.includes('姓名')
+        )
     }
-    else {
-      data[i].isWin = i18n.global.t('data.no')
+
+    if (rawJson.length === 0 || !hasExpectedKeys(rawJson[0])) {
+        // 无表头：按行数组读取，按列位次映射
+        const rows = XLSX.utils.sheet_to_json(workSheet, { defval: '', header: 1 }) as any[]
+        rawJson = rows
+            .map((r: any) => {
+                // 期望：第1列=姓名，第2列=编号，第3列=部门(可选)，第4列=身份(可选)
+                const name = (r && r.length > 0) ? String(r[0] ?? '').trim() : ''
+                const uid = (r && r.length > 1) ? String(r[1] ?? '').trim() : ''
+                const department = (r && r.length > 2) ? String(r[2] ?? '').trim() : ''
+                const identity = (r && r.length > 3) ? String(r[3] ?? '').trim() : ''
+                return { name, uid, department, identity }
+            })
+            // 过滤空行（姓名或编号至少一个有值）
+            .filter((it: any) => (it.name !== '' || it.uid !== ''))
+    } else {
+        // 带表头模板：标准化字段名（兼容中英文表头）
+        rawJson = rawJson.map((row: any) => {
+            const name = String(row.name ?? row.姓名 ?? '').trim()
+            const uid = String(row.uid ?? row.编号 ?? '').trim()
+            const department = String(row.department ?? row.部门 ?? '').trim()
+            const identity = String(row.identity ?? row.身份 ?? '').trim()
+            return { name, uid, department, identity }
+        })
     }
-    // 格式化数组为
-    data[i].prizeTime = data[i].prizeTime.join(',')
-    data[i].prizeName = data[i].prizeName.join(',')
-  }
-  let dataString = JSON.stringify(data)
-  dataString = dataString
-    .replaceAll(/uid/g, i18n.global.t('data.number'))
-    .replaceAll(/isWin/g, i18n.global.t('data.isWin'))
-    .replaceAll(/department/g, i18n.global.t('data.department'))
-    .replaceAll(/name/g, i18n.global.t('data.name'))
-    .replaceAll(/identity/g, i18n.global.t('data.identity'))
-    .replaceAll(/prizeName/g, i18n.global.t('data.prizeName'))
-    .replaceAll(/prizeTime/g, i18n.global.t('data.prizeTime'))
 
-  data = JSON.parse(dataString)
+    const allData = addOtherInfo(rawJson);
+    personConfig.resetPerson()
+    personConfig.addNotPersonList(allData)
+}
+const exportData = () => {
+    let data = JSON.parse(JSON.stringify(allPersonList.value))
+    // 排除一些字段
+    for (let i = 0; i < data.length; i++) {
+        delete data[i].x
+        delete data[i].y
+        delete data[i].id
+        delete data[i].createTime
+        delete data[i].updateTime
+        delete data[i].prizeId
+        // 修改字段名称
+        if (data[i].isWin) {
+            data[i].isWin = '是'
+        } else {
+            data[i].isWin = '否'
+        }
+        // 格式化数组为
+        data[i].prizeTime = data[i].prizeTime.join(',')
+        data[i].prizeName = data[i].prizeName.join(',')
+    }
+    let dataString = JSON.stringify(data)
+    dataString = dataString
+        .replaceAll(/uid/g, '编号')
+        .replaceAll(/isWin/g, '是否中奖')
+        .replaceAll(/department/g, '部门')
+        .replaceAll(/name/g, '姓名')
+        .replaceAll(/identity/g, '身份')
+        .replaceAll(/prizeName/g, '获奖')
+        .replaceAll(/prizeTime/g, '获奖时间')
 
-  if (data.length > 0) {
-    const dataBinary = XLSX.utils.json_to_sheet(data)
-    const dataBinaryBinary = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(dataBinaryBinary, dataBinary, 'Sheet1')
-    XLSX.writeFile(dataBinaryBinary, 'data.xlsx')
-  }
+    data = JSON.parse(dataString)
+
+    if (data.length > 0) {
+        const dataBinary = XLSX.utils.json_to_sheet(data)
+        const dataBinaryBinary = XLSX.utils.book_new()
+        XLSX.utils.book_append_sheet(dataBinaryBinary, dataBinary, 'Sheet1')
+        XLSX.writeFile(dataBinaryBinary, 'data.xlsx')
+    }
 }
 
-function resetData() {
-  personConfig.resetAlreadyPerson()
+const resetData = () => {
+    personConfig.resetAlreadyPerson()
 }
 
-function deleteAll() {
-  personConfig.deleteAllPerson()
+const deleteAll = () => {
+    personConfig.deleteAllPerson()
 }
 
-function delPersonItem(row: IPersonConfig) {
-  personConfig.deletePerson(row)
+const delPersonItem = (row: IPersonConfig) => {
+    personConfig.deletePerson(row)
 }
 
 const tableColumns = [
-  {
-    label: i18n.global.t('data.number'),
-    props: 'uid',
-  },
-  {
-    label: i18n.global.t('data.name'),
-    props: 'name',
-  },
-  {
-    label: i18n.global.t('data.department'),
-    props: 'department',
-  },
-  {
-    label: i18n.global.t('data.avatar'),
-    props: 'avatar',
-    formatValue(row: any) {
-       return row.avatar ? `<img src="${row.avatar}" alt="avatar" style="width: 50px; height: 50px;"/>` : '-';
-    }
-  },
-  {
-    label: i18n.global.t('data.identity'),
-    props: 'identity',
-  },
-  {
-    label: i18n.global.t('data.isWin'),
-    props: 'isWin',
-    formatValue(row: IPersonConfig) {
-      return row.isWin ? i18n.global.t('data.yes') : i18n.global.t('data.no')
+    {
+        label: '编号',
+        props: 'uid',
     },
-  },
-  {
-    label: i18n.global.t('data.operation'),
-    actions: [
-      // {
-      //     label: '编辑',
-      //     type: 'btn-info',
-      //     onClick: (row: any) => {
-      //         delPersonItem(row)
-      //     }
-      // },
-      {
-        label: i18n.global.t('data.delete'),
-        type: 'btn-error',
-        onClick: (row: IPersonConfig) => {
-          delPersonItem(row)
-        },
-      },
+    {
+        label: '姓名',
+        props: 'name',
+    },
+    {
+        label: '部门',
+        props: 'department',
+    },
+    {
+        label: '身份',
+        props: 'identity',
+    },
+    {
+        label: '是否已中奖',
+        props: 'isWin',
+        formatValue(row: IPersonConfig) {
+            return row.isWin ? '是' : '否'
+        }
+    },
+    {
+        label: '操作',
+        actions: [
+            // {
+            //     label: '编辑',
+            //     type: 'btn-info',
+            //     onClick: (row: any) => {
+            //         delPersonItem(row)
+            //     }
+            // },
+            {
+                label: '删除',
+                type: 'btn-error',
+                onClick: (row: IPersonConfig) => {
+                    delPersonItem(row)
+                }
+            },
 
-    ],
-  },
+        ]
+    },
 ]
 onMounted(() => {
 })
 </script>
 
 <template>
-  <dialog id="my_modal_1" ref="resetDataDialog" class="border-none modal">
-    <div class="modal-box">
-      <h3 class="text-lg font-bold">
-        {{ t('dialog.titleTip') }}
-      </h3>
-      <p class="py-4">
-        {{ t('dialog.dialogResetWinner') }}
-      </p>
-      <div class="modal-action">
-        <form method="dialog" class="flex gap-3">
-          <!-- if there is a button in form, it will close the modal -->
-          <button class="btn" @click="resetDataDialog.close()">
-            {{ t('button.cancel') }}
-          </button>
-          <button class="btn" @click="resetData">
-            {{ t('button.confirm') }}
-          </button>
-        </form>
-      </div>
-    </div>
-  </dialog>
-  <dialog id="my_modal_1" ref="delAllDataDialog" class="border-none modal">
-    <div class="modal-box">
-      <h3 class="text-lg font-bold">
-        {{ t('dialog.titleTip') }}
-      </h3>
-      <p class="py-4">
-        {{ t('dialog.dialogDelAllPerson') }}
-      </p>
-      <div class="modal-action">
-        <form method="dialog" class="flex gap-3">
-          <!-- if there is a button in form, it will close the modal -->
-          <button class="btn" @click="delAllDataDialog.close()">
-            {{ t('button.cancel') }}
-          </button>
-          <button class="btn" @click="deleteAll">
-            {{ t('button.confirm') }}
-          </button>
-        </form>
-      </div>
-    </div>
-  </dialog>
-  <div class="min-w-1000px">
-    <h2>{{ t('viewTitle.personManagement') }}</h2>
-    <div class="flex gap-3">
-      <button class="btn btn-error btn-sm" @click="delAllDataDialog.showModal()">
-        {{ t('button.allDelete') }}
-      </button>
-      <div class="tooltip tooltip-bottom" :data-tip="t('tooltip.downloadTemplateTip')">
-        <a
-          class="no-underline btn btn-secondary btn-sm" :download="t('data.xlsxName')" target="_blank"
-          :href="`/log-lottery/${t('data.xlsxName')}`"
-        >{{ t('button.downloadTemplate') }}</a>
-      </div>
-      <div class="">
-        <label for="explore">
+    <dialog id="my_modal_1" ref="resetDataDialog" class="border-none modal">
+        <div class="modal-box">
+            <h3 class="text-lg font-bold">提示!</h3>
+            <p class="py-4">该操作会清空人员中奖信息，是否继续？</p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-3">
+                    <!-- if there is a button in form, it will close the modal -->
+                    <button class="btn" @click="resetDataDialog.close()">取消</button>
+                    <button class="btn" @click="resetData">确定</button>
+                </form>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="my_modal_1" ref="delAllDataDialog" class="border-none modal">
+        <div class="modal-box">
+            <h3 class="text-lg font-bold">提示!</h3>
+            <p class="py-4">该操作会删除所有人员数据，是否继续？</p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-3">
+                    <!-- if there is a button in form, it will close the modal -->
+                    <button class="btn" @click="delAllDataDialog.close()">取消</button>
+                    <button class="btn" @click="deleteAll">确定</button>
+                </form>
+            </div>
+        </div>
+    </dialog>
+    <div class="min-w-1000px">
 
-          <div class="tooltip tooltip-bottom" :data-tip="t('tooltip.uploadExcelTip')">
-            <input
-              id="explore" type="file" class="" style="display: none" :accept="limitType"
-              @change="handleFileChange"
-            >
+        <h2>人员管理</h2>
+        <div class="flex gap-3">
+            <button class="btn btn-error btn-sm" @click="delAllDataDialog.showModal()">全部删除</button>
+            <div class="tooltip tooltip-bottom" data-tip="下载文件后，请在excel中填写数据，并保存为xlsx格式">
+                <a class="no-underline btn btn-secondary btn-sm" download="人口登记表.xlsx" target="_blank"
+                    href="/log-lottery/人口登记表.xlsx">下载模板</a>
+            </div>
+            <div class="">
+                <label for="explore">
 
-            <span class="btn btn-primary btn-sm">{{ t('button.importData') }}</span>
-          </div>
-        </label>
-      </div>
-      <button class="btn btn-error btn-sm" @click="resetDataDialog.showModal()">
-        {{ t('button.resetData') }}
-      </button>
-      <button class="btn btn-accent btn-sm" @click="exportData">
-        {{ t('button.exportResult') }}
-      </button>
-      <div>
-        <span>{{ t('table.luckyPeopleNumber') }}:</span>
-        <span>{{ alreadyPersonList.length }}</span>
-        <span>&nbsp;/&nbsp;</span>
-        <span>{{ allPersonList.length }}</span>
-      </div>
+                    <div class="tooltip tooltip-bottom" data-tip="上传修改好的excel文件">
+                        <input type="file" class="" id="explore" style="display: none" @change="handleFileChange"
+                            :accept="limitType" />
+
+                        <span class="btn btn-primary btn-sm">导入人员数据</span>
+                    </div>
+                </label>
+                <!-- <button class="btn btn-primary btn-sm">上传excel</button> -->
+
+            </div>
+            <button class="btn btn-error btn-sm" @click="resetDataDialog.showModal()">重置人员数据</button>
+            <button class="btn btn-accent btn-sm" @click="exportData">导出结果</button>
+            <div>
+                <span>中奖人数：</span>
+                <span>{{ alreadyPersonList.length }}</span>
+                <span>&nbsp;/&nbsp;</span>
+                <span>{{ allPersonList.length }}</span>
+            </div>
+        </div>
+        <DaiysuiTable :tableColumns="tableColumns" :data="allPersonList"></DaiysuiTable>
     </div>
-    <DaiysuiTable :table-columns="tableColumns" :data="allPersonList" />
-  </div>
 </template>
 
 <style lang='scss' scoped></style>

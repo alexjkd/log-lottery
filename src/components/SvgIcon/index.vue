@@ -1,6 +1,5 @@
 <script lang="ts" setup>
-import { computed } from 'vue'
-
+import { computed } from 'vue';
 const props = defineProps({
   prefix: {
     type: String,
@@ -18,11 +17,10 @@ const props = defineProps({
     type: String,
     default: '24px',
   },
-})
+});
 
-const symbolId = computed(() => `#${props.prefix}-${props.name}`)
+const symbolId = computed(() => `#${props.prefix}-${props.name}`);
 </script>
-
 <template>
   <svg
     aria-hidden="true"
@@ -33,7 +31,6 @@ const symbolId = computed(() => `#${props.prefix}-${props.name}`)
     <use :xlink:href="symbolId" />
   </svg>
 </template>
-
 <style scoped>
 .svg-icon {
   width: 24px;

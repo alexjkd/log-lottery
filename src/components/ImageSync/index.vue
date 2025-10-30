@@ -1,40 +1,41 @@
 <script setup lang='ts'>
+import {ref,onMounted} from 'vue'
 import localforage from 'localforage'
-import { onMounted, ref } from 'vue'
-
-const props = defineProps({
+const props=defineProps({
   imgItem: {
-    type: Object,
-    default: () => ({}),
+    type:Object,
+    default:()=>({})
   },
 })
 const imageDbStore = localforage.createInstance({
-  name: 'imgStore',
+    name: 'imgStore'
 })
 
-const imgUrl = ref('')
+const imgUrl=ref('')
 
-async function getImageStoreItem(item: any): Promise<string> {
-  let image = ''
-  if (item.url === 'Storage') {
-    const key = item.id
-    image = await imageDbStore.getItem(key) as string
-  }
-  else {
-    image = item.url
-  }
 
-  return image
+const getImageStoreItem=async (item:any):Promise<string>=>{
+    let image=''
+    if(item.url=='Storage'){
+        const key=item.id;
+        image=await imageDbStore.getItem(key) as string
+    }
+    else{
+        image=item.url
+    }
+
+     
+return image
 }
 
-onMounted(async () => {
-  const image = await getImageStoreItem(props.imgItem)
-  imgUrl.value = image
+onMounted(async ()=>{
+    const image=await getImageStoreItem(props.imgItem)
+    imgUrl.value=image
 })
 </script>
 
 <template>
-  <img :src="imgUrl" alt="Image" class="object-cover h-full rounded-xl">
+    <img :src="imgUrl" alt="Image" class="object-cover h-full rounded-xl"/>
 </template>
 
 <style lang='scss' scoped>
