@@ -72,6 +72,12 @@ const submitData = (value: any) => {
     selectedPrize.value!.separateCount.countList = value;
     selectedPrize.value = null
 }
+const closeDialog = () => {
+    selectedPrize.value = null
+}
+defineExpose({
+    closeDialog
+})
 const changePersonCount=()=>{
     temporaryPrize.value.separateCount.countList=[]
 }

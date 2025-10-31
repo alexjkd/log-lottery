@@ -41,6 +41,7 @@ const containerRef = ref<HTMLElement>()
 // const LuckyViewRef= ref()
 const canOperate = ref(true)
 const cameraZ = ref(3000)
+const prizeListRef = ref()
 
 const scene = ref()
 const camera = ref()
@@ -642,17 +643,6 @@ const startLottery = () => {
     }
     // 候选池：仅未中奖且不在暂存名单的人
     personPool.value = notPersonList.value
-    // 验证抽奖人数是否还够
-    if (personPool.value.length < currentPrize.value.count - currentPrize.value.isUsedCount) {
-        toast.open({
-            message: '抽奖人数不够',
-            type: 'warning',
-            position: 'top-right',
-            duration: 10000
-        })
-
-        return;
-    }
     luckyCount.value = 10
     // 自定义抽奖个数
 
@@ -667,6 +657,18 @@ const startLottery = () => {
         }
     }
     leftover < luckyCount.value ? luckyCount.value = leftover : luckyCount
+    
+    // 验证抽奖人数是否还够（在实际抽取数量确定后检查）
+    if (personPool.value.length < luckyCount.value) {
+        toast.open({
+            message: '抽奖人数不够',
+            type: 'warning',
+            position: 'top-right',
+            duration: 10000
+        })
+
+        return;
+    }
     for (let i = 0; i < luckyCount.value; i++) {
         if (personPool.value.length > 0) {
             const randomIndex = Math.round(Math.random() * (personPool.value.length - 1))
@@ -674,12 +676,6 @@ const startLottery = () => {
             personPool.value.splice(randomIndex, 1)
         }
     }
-    toast.open({
-        message: `现在抽取${currentPrize.value.name} ${leftover}人`,
-        type:'default',
-        position: 'top-right',
-        duration: 8000
-    })
     currentStatus.value = 2
     // 启动红包雨
     startPacketRain()
@@ -816,7 +812,11 @@ const continueLottery = async () => {
     // 清空上一轮数据
     luckyTargets.value = []
     luckyCardList.value = []
-    // 回到首页“开始”状态
+    // 关闭弹窗
+    if (prizeListRef.value && prizeListRef.value.closeDialog) {
+        prizeListRef.value.closeDialog()
+    }
+    // 回到首页"开始"状态
     currentStatus.value = 0
     // 恢复矩阵随机刷新
     if (!intervalTimer.value) {
@@ -1081,7 +1081,20 @@ onUnmounted(() => {
 
         <!-- <LuckyView :luckyPersonList="luckyTargets"  ref="LuckyViewRef"></LuckyView> -->
         <!-- <PlayMusic class="absolute right-0 bottom-1/2"></PlayMusic> -->
-        <PrizeList class="absolute left-0 top-32"></PrizeList>
+        <PrizeList ref="prizeListRef" class="absolute left-0 top-32"></PrizeList>
+        
+        <!-- 右上角显示当前奖项信息 -->
+        <div v-if="(currentStatus === 2 || currentStatus === 3) && currentPrize" 
+             class="absolute top-4 right-4 z-50 prize-info-panel">
+            <div class="flex items-center gap-2 px-3 py-2.5 bg-gray-800/85 backdrop-blur-sm rounded-lg shadow-lg border border-gray-600/40">
+                <div class="flex items-center justify-center w-5 h-5 text-white text-xs font-bold rounded-full bg-gray-700/60">
+                    i
+                </div>
+                <span class="text-white text-sm font-medium whitespace-nowrap">
+                    现在抽取{{ currentPrize.name }} {{ currentStatus === 3 ? luckyTargets.length : luckyCount }}人
+                </span>
+            </div>
+        </div>
     </div>
 </template>
 

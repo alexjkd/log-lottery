@@ -48,7 +48,11 @@ watch(scaleList, (val: number[]) => {
 }, { deep: true })
 
 watch(totalNumber, (val) => {
-    if (val <= 0) {
+    if (!val || val <= 0) {
+        // 当 totalNumber 为 undefined、null 或 <= 0 时关闭弹窗
+        if (separatedNumberRef.value) {
+            separatedNumberRef.value.close()
+        }
         return
     }
     separatedNumberRef.value.showModal()
